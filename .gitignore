@@ -1,0 +1,13 @@
+.venv/
+captures/
+matches/
+research/
+decompiled/
+extractor/
+__pycache__/
+*.pyc
+*.pcapng
+*.sample.json
+*.backup
+decode_match.py.ui-backup
+decode_match.py.v03-backup
