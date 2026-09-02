@@ -59,15 +59,38 @@ The decoder does not include the Arena connection/session key in the clean expor
 
 Windows is currently the supported platform.
 
-Install:
+### 1. Install Python 3.11 or newer
 
-1. **Python 3.11 or newer**
-   - During installation, enable **Add Python to PATH**.
-2. **Wireshark**
-   - Make sure **Npcap** is installed when prompted.
-3. **StarSavior via Steam**
+Download Python for Windows from:
 
-TShark is normally detected automatically from:
+https://www.python.org/downloads/windows/
+
+During installation:
+
+- enable **Add Python to PATH**
+- then choose **Install Now**
+
+After installation, open PowerShell or Command Prompt and verify:
+
+```powershell
+python --version
+```
+
+You should see Python 3.11 or newer.
+
+If `python --version` opens the Microsoft Store instead, reinstall Python from python.org and make sure **Add Python to PATH** is enabled.
+
+### 2. Install Wireshark and Npcap
+
+Download Wireshark from:
+
+https://www.wireshark.org/download.html
+
+Run the installer using the default options.
+
+When prompted to install **Npcap**, make sure it is installed. Npcap is required for packet capture.
+
+TShark is installed together with Wireshark and is normally detected automatically from:
 
 ```text
 C:\Program Files\Wireshark\tshark.exe
@@ -79,29 +102,66 @@ or:
 C:\Program Files (x86)\Wireshark\tshark.exe
 ```
 
+You do not need to open Wireshark while using the collector.
+
+### 3. Install StarSavior via Steam
+
+Install and launch StarSavior normally through Steam.
+
+The collector waits for:
+
+```text
+StarSavior.exe
+```
+
+before starting the capture workflow.
+
+### 4. Download the collector
+
+On the GitHub repository page, click:
+
+**Code → Download ZIP**
+
+Extract the ZIP somewhere convenient, for example:
+
+```text
+C:\starsavior-collector
+```
+
+You can also clone the repository with Git if you prefer.
+
 ## First-time setup
 
-Download or clone this repository, then run:
+Open the extracted `starsavior-collector` folder and double-click:
 
 ```text
 setup.bat
 ```
 
-This will:
+This will automatically:
 
-- create a local `.venv`
+- create a local Python virtual environment in `.venv`
 - upgrade pip
-- install the Python dependencies from `requirements.txt`
+- install the required Python dependencies from `requirements.txt`
 
-You only need to run setup again if the dependencies change.
+A successful setup ends with:
+
+```text
+Setup complete.
+You can now run run.bat
+```
+
+You normally only need to run `setup.bat` once.
 
 ## Collect one match
 
-Run:
+Start StarSavior, then double-click:
 
 ```text
 run.bat
 ```
+
+If StarSavior is not running yet, the collector will simply wait for it to start.
 
 The collector will:
 
