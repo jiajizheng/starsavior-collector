@@ -21,7 +21,7 @@ echo Installing dependencies...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 goto :error
 
-".venv\Scripts\python.exe" -m pip install -r requirements.txt
+".venv\Scripts\python.exe" -m pip install --no-cache-dir -r requirements.txt
 if errorlevel 1 goto :error
 
 echo.
