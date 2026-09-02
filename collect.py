@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-match passive collector wrapper for StarSavior PvP.
 
-v0.5 workflow:
+v0.6.2 workflow:
   1. Wait for StarSavior.exe.
   2. Start TShark/Npcap on the configured interface with a narrow TCP filter.
   3. User plays one ranked match.
@@ -11,8 +11,9 @@ v0.5 workflow:
   7. Save full normalized JSON under matches/.
   8. Save analytics-ready clean JSON alongside it.
 
-This version intentionally uses manual Enter-to-stop instead of trying to infer
-match completion live. Raw PCAPNG is preserved by default.
+Manual Enter-to-stop is retained instead of trying to infer match completion live.
+Use --continuous to capture multiple matches in one session. Press Enter after
+each completed match and Ctrl+C when finished. Raw PCAPNG is preserved by default.
 """
 from __future__ import annotations
 
@@ -401,6 +402,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete the raw PCAP after a successful decode",
     )
     parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="capture multiple matches in one session",
+    )
+    parser.add_argument(
         "--list-interfaces",
         action="store_true",
         help="print TShark interfaces and exit",
@@ -425,85 +431,125 @@ def main() -> int:
             wait_for_game()
 
         args.capture_dir.mkdir(parents=True, exist_ok=True)
-        started = dt.datetime.now()
-        pcap_path = args.capture_dir / (
-            "starsavior-pvp-" + started.strftime("%Y%m%d-%H%M%S") + ".pcapng"
-        )
 
-        cmd = [
-            str(tshark),
-            "-i",
-            interface,
-            "-f",
-            args.capture_filter,
-            "-B",
-            "64",
-            "-q",
-            "-w",
-            str(pcap_path),
-        ]
+        match_number = 1
 
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-
-        print(f"[collector] Interface: {interface_name} (TShark #{interface})")
-        print(f"[collector] Starting passive capture: {pcap_path}")
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            creationflags=creationflags,
-        )
-
-        # Give TShark a moment to initialize and catch immediate permission errors.
-        time.sleep(1.0)
-        if proc.poll() is not None:
-            stderr = proc.stderr.read() if proc.stderr else ""
-            raise RuntimeError(
-                f"TShark exited immediately with code {proc.returncode}.\n"
-                f"{stderr.strip()}"
+        while True:
+            started = dt.datetime.now()
+            pcap_path = args.capture_dir / (
+                "starsavior-pvp-" + started.strftime("%Y%m%d-%H%M%S") + ".pcapng"
             )
 
-        print()
-        print("CAPTURE IS RUNNING.")
-        print("Play ONE ranked match normally.")
-        print("Play through the result screen before stopping the capture.")
-        print("Opening Battle Log is optional.")
-        print()
-        input("When you are finished and back at Ranked, press Enter here to stop... ")
+            cmd = [
+                str(tshark),
+                "-i",
+                interface,
+                "-f",
+                args.capture_filter,
+                "-B",
+                "64",
+                "-q",
+                "-w",
+                str(pcap_path),
+            ]
 
-        print("[collector] Stopping capture ...")
-        stop_tshark(proc)
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-        if proc.stderr:
-            # Read only after the process has ended so the pipe cannot block capture.
-            stderr = proc.stderr.read().strip()
-            if stderr and "Capturing on" not in stderr:
-                print(f"[collector] TShark: {stderr}")
+            print()
+            if args.continuous:
+                print(f"[collector] Ready for match #{match_number}.")
+            print(f"[collector] Interface: {interface_name} (TShark #{interface})")
+            print(f"[collector] Starting passive capture: {pcap_path}")
 
-        if not pcap_path.exists() or pcap_path.stat().st_size == 0:
-            raise RuntimeError("Capture file was not created or is empty.")
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=creationflags,
+            )
 
-        print("[collector] Decoding capture ...")
-        schema = load_schema(args.schema)
-        result = build_match(pcap_path, schema)
-        json_path = write_match_json(result, args.match_dir, started)
-        clean_json_path = write_clean_match_json(result, json_path)
+            # Give TShark a moment to initialize and catch immediate permission errors.
+            time.sleep(1.0)
+            if proc.poll() is not None:
+                stderr = proc.stderr.read() if proc.stderr else ""
+                raise RuntimeError(
+                    f"TShark exited immediately with code {proc.returncode}.\n"
+                    f"{stderr.strip()}"
+                )
 
-        print_summary(result, pcap_path, json_path, clean_json_path)
+            print()
+            print("CAPTURE IS RUNNING.")
+            print("Play ONE ranked match normally.")
+            print("Play through the result screen before stopping the capture.")
+            print("Opening Battle Log is optional.")
+            print()
 
-        if args.delete_pcap:
-            pcap_path.unlink(missing_ok=True)
-            print("[collector] Raw capture deleted (--delete-pcap).")
+            if args.continuous:
+                try:
+                    input(
+                        "After the match, press Enter to save and continue. "
+                        "Press Ctrl+C when you are completely finished: "
+                    )
+                except KeyboardInterrupt:
+                    print("\n[collector] Stopping active capture ...")
+                    stop_tshark(proc)
+
+                    if pcap_path.exists():
+                        try:
+                            pcap_path.unlink()
+                            print("[collector] Discarded unfinished capture.")
+                        except OSError:
+                            print(
+                                "[collector] Could not delete the unfinished capture; "
+                                f"it remains at: {pcap_path}"
+                            )
+
+                    print("[collector] Stopped by user.")
+                    return 0
+            else:
+                input(
+                    "When you are finished and back at Ranked, "
+                    "press Enter here to stop... "
+                )
+
+            print("[collector] Stopping capture ...")
+            stop_tshark(proc)
+
+            if proc.stderr:
+                # Read only after the process has ended so the pipe cannot block capture.
+                stderr = proc.stderr.read().strip()
+                if stderr and "Capturing on" not in stderr:
+                    print(f"[collector] TShark: {stderr}")
+
+            if not pcap_path.exists() or pcap_path.stat().st_size == 0:
+                raise RuntimeError("Capture file was not created or is empty.")
+
+            print("[collector] Decoding capture ...")
+            schema = load_schema(args.schema)
+            result = build_match(pcap_path, schema)
+            json_path = write_match_json(result, args.match_dir, started)
+            clean_json_path = write_clean_match_json(result, json_path)
+
+            print_summary(result, pcap_path, json_path, clean_json_path)
+
+            if args.delete_pcap:
+                pcap_path.unlink(missing_ok=True)
+                print("[collector] Raw capture deleted (--delete-pcap).")
+
+            if not args.continuous:
+                break
+
+            match_number += 1
 
         return 0
 
     except KeyboardInterrupt:
-        print("\n[collector] Cancelled.")
-        return 130
+        print("\n[collector] Stopped by user.")
+        return 0
     except (RuntimeError, DecodeError, OSError, ValueError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         print(

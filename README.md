@@ -2,7 +2,7 @@
 
 A small Windows tool for **passively capturing and decoding StarSavior ranked PvP match data**.
 
-The collector is intended for volunteers who want to contribute PvP build data for analysis. It captures one match at a time, decodes the match locally, and produces a clean JSON file containing the opponent/team/build information.
+The collector is intended for volunteers who want to contribute PvP build data for analysis. It captures ranked matches one at a time within a continuous session, decodes each match locally, and produces a clean JSON file containing the opponent/team/build information.
 
 ## What it collects
 
@@ -153,7 +153,7 @@ You can now run run.bat
 
 You normally only need to run `setup.bat` once.
 
-## Collect one match
+## Collect PvP matches
 
 Start StarSavior, then double-click:
 
@@ -163,29 +163,34 @@ run.bat
 
 If StarSavior is not running yet, the collector will simply wait for it to start.
 
-The collector will:
+`run.bat` starts the collector in continuous mode, so you can collect as many ranked matches as you want in one session.
 
-1. wait for `StarSavior.exe`
-2. automatically detect the active Windows network interface
-3. start passive TShark capture
-4. ask you to play **one ranked PvP match**
-5. wait for you to press Enter after returning to Ranked
-6. stop the capture
-7. decode and enrich the match
-8. write both a full debug JSON and a clean analytics JSON
+For each match:
+
+1. play **one ranked PvP match**
+2. play through the result screen and return to Ranked
+3. press **Enter** in the collector window
+4. the capture stops and that match is decoded
+5. a full debug JSON and clean analytics JSON are saved
+6. a fresh capture starts automatically for the next match
+
+When you are completely finished collecting, press **Ctrl+C** while the next capture is waiting. The collector will stop TShark cleanly, discard that unfinished capture, and exit.
 
 Example:
 
 ```text
 [collector] StarSavior detected.
+
+[collector] Ready for match #1.
 [collector] Interface: Ethernet (TShark #1)
 [collector] Starting passive capture: ...\captures\starsavior-pvp-....pcapng
 
 CAPTURE IS RUNNING.
 Play ONE ranked match normally.
 Play through the result screen before stopping the capture.
+Opening Battle Log is optional.
 
-When you are finished and back at Ranked, press Enter here to stop...
+After the match, press Enter to save and continue. Press Ctrl+C when you are completely finished:
 ```
 
 A successful decode will end with something similar to:
@@ -200,17 +205,23 @@ A successful decode will end with something similar to:
   Raw capture:    ...\captures\starsavior-pvp-....pcapng
   Full JSON:      ...\matches\....json
   Clean JSON:     ...\matches\....-clean.json
+
+[collector] Ready for match #2.
 ```
+
+Each match is saved with its own timestamp and match ID, so collecting another match does not overwrite the previous one.
 
 ### What to send
 
-For normal PvP-data contribution, send only:
+For normal PvP-data contribution, send the generated clean JSON files:
 
 ```text
-matches\<match>-clean.json
+matches\*-clean.json
 ```
 
-You do not need to send the raw capture or the full debug JSON.
+You can send multiple `*-clean.json` files if you collected multiple matches.
+
+You do not need to send the raw captures or full debug JSON files.
 
 ## Network interface detection
 
