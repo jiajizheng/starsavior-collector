@@ -34,8 +34,8 @@ DEFAULT_EB_DIR = Path(
 )
 
 # Identified from the user's current installed build on 2026-09-01.
-UNIT_MASTER_BUNDLE = "3bccca1b21794bf61aebadb685311d9e52d4214e.bundle"
-STRING_COMMON_BUNDLE = "1ccc51b0c47175e8acb210db2deb8349970c7387.bundle"
+UNIT_MASTER_BUNDLE = "acda0720b289f558c546ef8c82f3e116a8860f7e.bundle"
+STRING_COMMON_BUNDLE = "3d90eef225cf913b5e39e8ac0edbc59d8de9fa2d.bundle"
 
 KNOWN_PLAINTEXT = bytes(
     [0x55, 0x6E, 0x69, 0x74, 0x79, 0x46, 0x53, 0x00,
@@ -240,6 +240,57 @@ def _resolve_eb_dir() -> Path:
     return Path(override) if override else DEFAULT_EB_DIR
 
 
+
+def _discover_master_bundles(eb_dir: Path) -> tuple[Path, Path]:
+    """Find current UNIT_TEMPLET and STRING_COMMON bundles after a game update.
+
+    Fast path uses the known hashes above. If either file disappeared, scan the
+    installed bundles and identify them by their contained TextAsset names.
+    """
+    unit_bundle = eb_dir / UNIT_MASTER_BUNDLE
+    string_bundle = eb_dir / STRING_COMMON_BUNDLE
+
+    if unit_bundle.exists() and string_bundle.exists():
+        return unit_bundle, string_bundle
+
+    found_unit = unit_bundle if unit_bundle.exists() else None
+    found_string = string_bundle if string_bundle.exists() else None
+
+    # New/changed bundles are usually among the most recently modified files,
+    # so inspect those first while still falling back to a complete scan.
+    bundles = list(eb_dir.glob("*.bundle"))
+    bundles.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    for path in bundles:
+        if found_unit is not None and found_string is not None:
+            break
+        try:
+            dec = decrypt_bundle(path.read_bytes(), path.stem)
+            assets = _extract_textassets(dec)
+        except Exception:
+            continue
+
+        names = set(assets)
+        if found_unit is None and any(
+            name.startswith("CLIENT_UNIT_TEMPLET_BASE") for name in names
+        ):
+            found_unit = path
+
+        if found_string is None and "STRING_COMMON" in names:
+            found_string = path
+
+    if found_unit is None:
+        raise LookupError(
+            f"Could not discover the current unit master bundle under {eb_dir}."
+        )
+    if found_string is None:
+        raise LookupError(
+            f"Could not discover the current STRING_COMMON bundle under {eb_dir}."
+        )
+
+    return found_unit, found_string
+
+
 def build_unit_lookup(base_dir: Path) -> Dict[str, Any]:
     """Build/cache the character lookup from the current installed game."""
     base_dir = Path(base_dir)
@@ -248,19 +299,7 @@ def build_unit_lookup(base_dir: Path) -> Dict[str, Any]:
     cache_path = cache_dir / "units.json"
 
     eb_dir = _resolve_eb_dir()
-    unit_bundle = eb_dir / UNIT_MASTER_BUNDLE
-    string_bundle = eb_dir / STRING_COMMON_BUNDLE
-
-    if not unit_bundle.exists():
-        raise LookupError(
-            f"Unit master bundle not found: {unit_bundle}. "
-            "The game may have updated; bundle discovery needs refreshing."
-        )
-    if not string_bundle.exists():
-        raise LookupError(
-            f"STRING_COMMON bundle not found: {string_bundle}. "
-            "The game may have updated; bundle discovery needs refreshing."
-        )
+    unit_bundle, string_bundle = _discover_master_bundles(eb_dir)
 
     unit_dec = decrypt_bundle(unit_bundle.read_bytes(), unit_bundle.stem)
     unit_assets = _extract_textassets(unit_dec)
@@ -333,8 +372,8 @@ def build_unit_lookup(base_dir: Path) -> Dict[str, Any]:
         "format": "starsavior-unit-lookups-v0.3",
         "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source_bundles": {
-            "unit_master": UNIT_MASTER_BUNDLE,
-            "string_common": STRING_COMMON_BUNDLE,
+            "unit_master": unit_bundle.name,
+            "string_common": string_bundle.name,
         },
         "units": units,
     }

@@ -888,6 +888,24 @@
       "stat_profile": "NKM_UNIT_S_SSR_CASTER_STANDARD",
       "portrait": "UF_NKM_UNIT_S_BUNNY_PRAY.png"
     },
+    "1058": {
+      "name": "Amora",
+      "display_name": "Amora",
+      "variant": null,
+      "name_key": null,
+      "title": null,
+      "title_key": null,
+      "internal_id": "STRANISEARL_ROSEBLADE",
+      "character_category_id": null,
+      "rarity": "SSR",
+      "unit_kind": null,
+      "role": "Assassin",
+      "role_subtype": null,
+      "adjust_type": "Order",
+      "attack_tag": "Slash",
+      "stat_profile": null,
+      "portrait": null
+    },
     "1501": {
       "name": "Besta",
       "display_name": "Besta",
