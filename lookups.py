@@ -24,6 +24,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+import lz4.block
 import lz4.frame
 
 UNITY_VERSION = "6000.0.61f1"
@@ -148,6 +149,119 @@ def _templet_mask(filename: str) -> bytes:
     return hashlib.md5(filename.encode("utf-8")).digest()
 
 
+
+def _decompress_lz4_frame_blocks(packed: bytes) -> bytes:
+    """Fallback LZ4-frame decoder for updated StarSavior template assets.
+
+    The Sep 3 2026 STRING_COMMON frame is structurally valid LZ4, but some
+    compressed blocks fail through python-lz4's high-level frame decoder.
+    Decoding the same independent blocks with a larger destination buffer
+    succeeds and reconstructs valid UTF-8/JSON.
+
+    This fallback intentionally supports only independent-block LZ4 frames,
+    which is what the game's affected template currently uses.
+    """
+    if len(packed) < 7 or packed[:4] != b"\x04\x22\x4d\x18":
+        raise LookupError("LZ4 fallback: invalid frame magic/header")
+
+    flg = packed[4]
+    bd = packed[5]
+
+    # LZ4 frame version must be 01b.
+    if (flg >> 6) != 1:
+        raise LookupError(f"LZ4 fallback: unsupported frame version in FLG {flg:#04x}")
+
+    block_independent = bool(flg & 0x20)
+    block_checksum = bool(flg & 0x10)
+    content_size_flag = bool(flg & 0x08)
+    content_checksum = bool(flg & 0x04)
+    dict_id_flag = bool(flg & 0x01)
+
+    if not block_independent:
+        raise LookupError("LZ4 fallback: linked-block frames are not supported")
+
+    # BD bits 6:4 map to the standard max block sizes.
+    block_size_code = (bd >> 4) & 0x07
+    max_block_size = {
+        4: 64 * 1024,
+        5: 256 * 1024,
+        6: 1024 * 1024,
+        7: 4 * 1024 * 1024,
+    }.get(block_size_code)
+    if max_block_size is None:
+        raise LookupError(f"LZ4 fallback: unsupported BD {bd:#04x}")
+
+    # Frame header: magic + FLG + BD + optional fields + HC byte.
+    pos = 6
+    if content_size_flag:
+        if pos + 8 > len(packed):
+            raise LookupError("LZ4 fallback: truncated content-size field")
+        pos += 8
+    if dict_id_flag:
+        if pos + 4 > len(packed):
+            raise LookupError("LZ4 fallback: truncated dictionary-id field")
+        pos += 4
+    if pos >= len(packed):
+        raise LookupError("LZ4 fallback: truncated header checksum")
+    pos += 1  # HC
+
+    parts = []
+    while True:
+        if pos + 4 > len(packed):
+            raise LookupError("LZ4 fallback: truncated block header")
+
+        raw_size = struct.unpack_from("<I", packed, pos)[0]
+        pos += 4
+
+        if raw_size == 0:
+            break
+
+        is_raw = bool(raw_size & 0x80000000)
+        block_size = raw_size & 0x7FFFFFFF
+
+        if block_size <= 0 or block_size > max_block_size:
+            raise LookupError(
+                f"LZ4 fallback: invalid block size {block_size} "
+                f"(max {max_block_size})"
+            )
+        if pos + block_size > len(packed):
+            raise LookupError("LZ4 fallback: truncated block payload")
+
+        block = packed[pos : pos + block_size]
+        pos += block_size
+
+        if is_raw:
+            out = block
+        else:
+            # Some updated STRING_COMMON blocks still expand to 64 KiB but need
+            # a larger destination capacity than python-lz4's exact-size path.
+            # 2x the advertised max is sufficient for the affected 64 KiB
+            # frames and remains bounded for larger standard LZ4 block sizes.
+            out = lz4.block.decompress(
+                block,
+                uncompressed_size=max_block_size * 2,
+            )
+
+        parts.append(out)
+
+        if block_checksum:
+            if pos + 4 > len(packed):
+                raise LookupError("LZ4 fallback: truncated block checksum")
+            pos += 4
+
+    if content_checksum:
+        if pos + 4 > len(packed):
+            raise LookupError("LZ4 fallback: truncated content checksum")
+        pos += 4
+
+    if pos != len(packed):
+        raise LookupError(
+            f"LZ4 fallback: trailing bytes after frame ({len(packed) - pos})"
+        )
+
+    return b"".join(parts)
+
+
 def decrypt_templet(data: bytes, filename: str) -> str:
     if len(data) <= 4:
         raise LookupError(f"{filename}: templet is too short")
@@ -168,7 +282,11 @@ def decrypt_templet(data: bytes, filename: str) -> str:
         raise LookupError(f"{filename}: unsupported templet version {version}")
 
     try:
-        return lz4.frame.decompress(packed).decode("utf-8-sig")
+        try:
+            unpacked = lz4.frame.decompress(packed)
+        except Exception:
+            unpacked = _decompress_lz4_frame_blocks(packed)
+        return unpacked.decode("utf-8-sig")
     except Exception as exc:
         raise LookupError(f"{filename}: LZ4/UTF-8 decode failed: {exc}") from exc
 
