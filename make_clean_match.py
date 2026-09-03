@@ -140,6 +140,7 @@ def make_clean(data):
         "format": "starsavior-match-clean-v0.3",
         "source": data.get("source"),
         "match": data.get("match"),
+        "ranked_rating": data.get("ranked_rating"),
         "self": clean_side(data.get("self") or {}),
         "opponent": clean_side(data.get("opponent") or {}),
         "battle_event_counts": data.get("battle_event_counts"),

@@ -40,6 +40,7 @@ PID_ARENA_MATCH_NOT = 1691
 PID_PVP_START_BATTLE_NOT = 1609
 PID_BATTLE_NEXT_TURN_NOT = 608
 PID_BATTLE_END_NOT = 612
+PID_RANK_PVP_DATA_ACK = 1673
 PID_RANK_HISTORY_ACK = 1681
 
 
@@ -779,6 +780,30 @@ def find_enum_name(value, names: set):
     return None
 
 
+
+def normalize_rank_pvp_data_ack(obj, schema):
+    """Extract the confirmed ranked PvP rating from RANK_PVP_DATA_ACK (1673).
+
+    In the Sep 2026 live schema, ACK field 2 is the ranked-data object and
+    its field 1 is the current rating. This was validated against a known
+    Magikarp capture where the value changed 1916 -> 1934 after a win.
+
+    Other fields remain intentionally unnamed until independently verified.
+    """
+    vals = ordered_values(obj, schema)
+    rank_data = vals[2] if len(vals) > 2 else None
+    rank_vals = ordered_values(rank_data, schema)
+
+    rating = rank_vals[1] if len(rank_vals) > 1 else None
+    if not isinstance(rating, int):
+        rating = None
+
+    return {
+        "rating": rating,
+        "raw": generic_numbered(rank_data, schema) if rank_data is not None else None,
+    }
+
+
 def normalize_event(event_obj, frame_sequence: int, schema):
     vals = ordered_values(event_obj, schema)
     event_id = vals[0] if len(vals) > 0 else None
@@ -842,6 +867,7 @@ def build_match(path: Path, schema):
     end_obj = None
     events = []
     history_entries = None
+    rank_rating_observations = []
     decode_failures = []
 
     # Decode only packets relevant to the normalized model. This avoids exposing
@@ -854,6 +880,7 @@ def build_match(path: Path, schema):
             PID_PVP_START_BATTLE_NOT,
             PID_BATTLE_NEXT_TURN_NOT,
             PID_BATTLE_END_NOT,
+            PID_RANK_PVP_DATA_ACK,
             PID_RANK_HISTORY_ACK,
         }:
             continue
@@ -874,6 +901,13 @@ def build_match(path: Path, schema):
                         events.append(normalize_event(ev, frame["sequence"], schema))
             elif pid == PID_BATTLE_END_NOT:
                 end_obj = obj
+            elif pid == PID_RANK_PVP_DATA_ACK:
+                rank_data = normalize_rank_pvp_data_ack(obj, schema)
+                if rank_data.get("rating") is not None:
+                    rank_rating_observations.append({
+                        "sequence": frame["sequence"],
+                        "rating": rank_data["rating"],
+                    })
             elif pid == PID_RANK_HISTORY_ACK:
                 vals = ordered_values(obj, schema)
                 for value in vals:
@@ -927,6 +961,16 @@ def build_match(path: Path, schema):
     battle_type = enum_name(battle_vals[2]) if len(battle_vals) > 2 else None
     map_name = battle_vals[4] if len(battle_vals) > 4 else None
 
+    rating_before = rank_rating_observations[0]["rating"] if rank_rating_observations else None
+    rating_after = rank_rating_observations[-1]["rating"] if rank_rating_observations else None
+    rating_change = (
+        rating_after - rating_before
+        if len(rank_rating_observations) >= 2
+        and rating_before is not None
+        and rating_after is not None
+        else None
+    )
+
     result = {
         "format": "starsavior-match-v0.1",
         "source": path.name,
@@ -942,6 +986,13 @@ def build_match(path: Path, schema):
         "sides": {"Ateam": side_a, "Bteam": side_b},
         "battle_events": events,
         "battle_event_counts": dict(Counter(e.get("type") or str(e.get("type_id")) for e in events)),
+        "ranked_rating": {
+            "before": rating_before,
+            "after": rating_after,
+            "change": rating_change,
+            "observations": rank_rating_observations,
+            "data_ack_count": packet_counts.get(PID_RANK_PVP_DATA_ACK, 0),
+        },
         "rank_history": {
             "history_ack_seen": packet_counts.get(PID_RANK_HISTORY_ACK, 0) > 0,
             "entries_in_ack": history_entries,
